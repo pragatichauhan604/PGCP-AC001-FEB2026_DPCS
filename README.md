@@ -1,4 +1,4 @@
-# DPCS
+# DPPCS
 
 Digital Prescription and Pharmacy Coordination System.
 
