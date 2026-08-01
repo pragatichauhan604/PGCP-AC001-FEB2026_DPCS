@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ClipboardPlus, Pill, QrCode, Store, Stethoscope } from "lucide-react";
+import { PrescriptionList } from "../../components/prescriptions/PrescriptionList";
 import { QrModal } from "../../components/qr/QrModal";
 import { StatCard } from "../../components/ui/StatCard";
 import { demoPharmacies, demoPrescriptions } from "../../data/mockData";
@@ -108,7 +109,34 @@ export function PatientPanel({ api, screen, setScreen, notify }: PatientPanelPro
           {!doctors.length && <p className="empty-state">No approved doctors are available yet.</p>}
         </div>
       </section>
-      
+
+      <div id="patient-prescriptions">
+        <PrescriptionList
+          prescriptions={prescriptions.length ? prescriptions : demoPrescriptions}
+          audience="patient"
+          onShowQr={async (prescription) => {
+            try {
+              const response = await api.get<{ prescription: Prescription }>(`/patient/prescriptions/${prescription.id}/qr`);
+              setQrPreview({
+                title: `Prescription ${response.prescription.id}`,
+                image: response.prescription.qrCode,
+                token: response.prescription.qrCodeToken,
+              });
+            } catch (error) {
+              notify(error instanceof ApiError ? error.message : "QR code could not be opened");
+            }
+          }}
+          onRefill={async (id) => {
+            try {
+              await api.post(`/patient/prescriptions/${id}/refill-request`);
+              notify("Refill request sent to the doctor.");
+            } catch (error) {
+              notify(error instanceof ApiError ? error.message : "Refill request could not be sent");
+            }
+          }}
+          onDownloadPdf={downloadPdf}
+        />
+      </div>
       {qrPreview && <QrModal qr={qrPreview} onClose={() => setQrPreview(null)} />}
     </div>
   );
