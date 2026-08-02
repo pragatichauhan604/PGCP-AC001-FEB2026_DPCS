@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { ClipboardPlus, Pill, QrCode, Search } from "lucide-react";
+import { QrModal } from "../../components/qr/QrModal";
 import { Field } from "../../components/ui/Field";
 import { demoMedicines } from "../../data/mockData";
 import { ApiClient, ApiError } from "../../services/api";
-import { Medicine, PrescriptionItem, ToastFn } from "../../types";
+import { Medicine, Prescription, PrescriptionItem, QrPreview, ToastFn } from "../../types";
 
 const emptyItem: PrescriptionItem = {
   medicineName: "",
@@ -18,9 +19,20 @@ const emptyItem: PrescriptionItem = {
 type CreatePrescriptionProps = {
   api: ApiClient;
   notify: ToastFn;
+  initialPatient?: {
+    appointmentId?: string;
+    id: string;
+    name: string;
+    phone?: string;
+    email?: string;
+    reason?: string;
+    scheduledAt?: string | null;
+    doctorNote?: string | null;
+  } | null;
+  onPrescriptionCreated?: (appointmentId?: string) => void;
 };
 
-export function CreatePrescription({ api, notify }: CreatePrescriptionProps) {
+export function CreatePrescription({ api, notify, initialPatient, onPrescriptionCreated }: CreatePrescriptionProps) {
   const [patientSearch, setPatientSearch] = useState("");
   const [patients, setPatients] = useState<any[]>([]);
   const [patientId, setPatientId] = useState("");
@@ -28,10 +40,37 @@ export function CreatePrescription({ api, notify }: CreatePrescriptionProps) {
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<PrescriptionItem[]>([{ ...emptyItem }]);
   const [medicines, setMedicines] = useState<Medicine[]>(demoMedicines);
+  const [qrPreview, setQrPreview] = useState<QrPreview | null>(null);
 
   useEffect(() => {
     api.get<{ medicines: Medicine[] }>("/catalog/medicines").then((data) => setMedicines(data.medicines)).catch(() => setMedicines(demoMedicines));
   }, [api]);
+
+  useEffect(() => {
+    if (!initialPatient) return;
+
+    setPatientId(initialPatient.id);
+    setPatientSearch(initialPatient.name);
+    setPatients([
+      {
+        id: initialPatient.id,
+        user: {
+          fullName: initialPatient.name,
+          phone: initialPatient.phone,
+          email: initialPatient.email,
+        },
+      },
+    ]);
+    setDisease(initialPatient.reason || "");
+    setNotes(
+      [
+        initialPatient.scheduledAt ? `Appointment: ${new Date(initialPatient.scheduledAt).toLocaleString("en-IN")}` : "",
+        initialPatient.doctorNote ? `Appointment note: ${initialPatient.doctorNote}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }, [initialPatient]);
 
   useEffect(() => {
     if (!patientSearch.trim()) return;
@@ -47,8 +86,9 @@ export function CreatePrescription({ api, notify }: CreatePrescriptionProps) {
 
   const submit = async () => {
     try {
-      await api.post("/doctor/prescriptions", {
+      const response = await api.post<{ prescription: Prescription }>("/doctor/prescriptions", {
         patientId,
+        appointmentId: initialPatient?.appointmentId,
         disease: disease || undefined,
         notes,
         items: items.map((item) => ({
@@ -57,11 +97,19 @@ export function CreatePrescription({ api, notify }: CreatePrescriptionProps) {
           medicineId: item.medicineId || undefined,
         })),
       });
+      onPrescriptionCreated?.(initialPatient?.appointmentId);
+      setQrPreview({
+        title: `Prescription ${response.prescription.id}`,
+        image: response.prescription.qrCode,
+        token: response.prescription.qrCodeToken,
+      });
       notify("Prescription issued with QR code.");
       setItems([{ ...emptyItem }]);
       setNotes("");
       setDisease("");
       setPatientId("");
+      setPatientSearch("");
+      setPatients([]);
     } catch (error) {
       notify(error instanceof ApiError ? error.message : "Prescription could not be saved");
     }
@@ -156,6 +204,7 @@ export function CreatePrescription({ api, notify }: CreatePrescriptionProps) {
         </div>
         <textarea className="notes-box" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Overall notes or follow-up instructions" />
       </section>
+      {qrPreview && <QrModal qr={qrPreview} onClose={() => setQrPreview(null)} />}
     </div>
   );
 }
