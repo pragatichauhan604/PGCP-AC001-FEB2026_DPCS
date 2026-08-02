@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Pill } from "lucide-react";
 import { Field } from "../components/ui/Field";
 import { FileField } from "../components/ui/FileField";
@@ -7,6 +7,27 @@ import { AuthMode, Role, Session, ToastFn, User } from "../types";
 
 const acceptedProfilePhotoTypes = ["image/jpeg", "image/png", "image/webp"];
 const maxProfilePhotoSize = 2 * 1024 * 1024;
+
+const createInitialForm = () => ({
+  fullName: "",
+  email: "",
+  password: "",
+  confirmPassword: "",
+  phone: "",
+  role: "patient" as Role,
+  licenseNumber: "",
+  specialization: "General Physician",
+  hospitalName: "",
+  hospitalAddress: "",
+  profilePhoto: "",
+  dateOfBirth: "",
+  gender: "male",
+  bloodGroup: "O+",
+  address: "",
+  city: "",
+  pincode: "",
+  pharmacyId: "",
+});
 
 type AuthPageProps = {
   api: ApiClient;
@@ -21,26 +42,27 @@ export function AuthPage({ api, initialMode = "login", onAuth, notify }: AuthPag
   const [formError, setFormError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
-  const [form, setForm] = useState({
-    fullName: "",
-    email: "",
-    password: "",
-    confirmPassword: "",
-    phone: "",
-    role: "patient" as Role,
-    licenseNumber: "",
-    specialization: "General Physician",
-    hospitalName: "",
-    hospitalAddress: "",
-    profilePhoto: "",
-    dateOfBirth: "",
-    gender: "male",
-    bloodGroup: "O+",
-    address: "",
-    city: "",
-    pincode: "",
-    pharmacyId: "",
-  });
+  const [form, setForm] = useState(createInitialForm);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetOtpSent, setResetOtpSent] = useState(false);
+  const [resetOtp, setResetOtp] = useState("");
+  const [resetDevOtp, setResetDevOtp] = useState("");
+  const [resetMessage, setResetMessage] = useState("");
+  const [registerChooserOpen, setRegisterChooserOpen] = useState(false);
+
+  useEffect(() => {
+    setMode(initialMode);
+    setForm(createInitialForm());
+    setFormError("");
+    setFieldErrors({});
+    setTouched({});
+    setResetOpen(false);
+    setResetOtpSent(false);
+    setResetOtp("");
+    setResetDevOtp("");
+    setResetMessage("");
+    setRegisterChooserOpen(false);
+  }, [initialMode]);
 
   const update = (key: string, value: string) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -68,10 +90,88 @@ export function AuthPage({ api, initialMode = "login", onAuth, notify }: AuthPag
 
   const changeMode = (next: AuthMode) => {
     setMode(next);
+    setForm(createInitialForm());
     setFormError("");
     setFieldErrors({});
     setTouched({});
+    setResetOpen(false);
+    setResetOtpSent(false);
+    setResetOtp("");
+    setResetDevOtp("");
+    setResetMessage("");
+    setRegisterChooserOpen(false);
     window.history.pushState({}, "", next === "login" ? "/login" : `/register/${next}`);
+  };
+
+  const requestPasswordReset = async () => {
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email);
+    if (!emailOk) {
+      setFieldErrors({ email: "Enter a valid email address." });
+      notify("Enter your registered email first.");
+      return;
+    }
+
+    setBusy(true);
+    setFormError("");
+    try {
+      const response = await api.post<{ message: string; devOtp?: string }>("/auth/forgot-password", {
+        email: form.email,
+      });
+      setResetOtpSent(true);
+      setResetDevOtp(response.devOtp || "");
+      setResetMessage(response.message || "");
+      notify(response.message || "OTP generated.");
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "Could not generate OTP";
+      setFormError(message);
+      notify(message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resetPassword = async () => {
+    if (!resetOtp || resetOtp.length !== 6) {
+      notify("Enter the 6-digit OTP.");
+      return;
+    }
+
+    const passwordOk = form.password.length >= 8 && /[A-Z]/.test(form.password) && /[0-9]/.test(form.password);
+    if (!passwordOk) {
+      setFieldErrors({ password: "Use 8+ characters with one uppercase letter and one number." });
+      notify("Enter a valid new password.");
+      return;
+    }
+
+    if (form.password !== form.confirmPassword) {
+      setFieldErrors({ confirmPassword: "Passwords do not match." });
+      notify("Passwords do not match.");
+      return;
+    }
+
+    setBusy(true);
+    setFormError("");
+    try {
+      const response = await api.post<{ message: string }>("/auth/reset-password", {
+        email: form.email,
+        otp: resetOtp,
+        password: form.password,
+        confirmPassword: form.confirmPassword,
+      });
+      notify(response.message || "Password reset successful.");
+      setResetOpen(false);
+      setResetOtpSent(false);
+      setResetOtp("");
+      setResetDevOtp("");
+      setResetMessage("");
+      setForm((current) => ({ ...createInitialForm(), email: current.email }));
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "Password could not be reset";
+      setFormError(message);
+      notify(message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const validateField = (key: string) => {
@@ -222,6 +322,8 @@ export function AuthPage({ api, initialMode = "login", onAuth, notify }: AuthPag
       await api.post(`/auth/register/${mode}`, payload);
       notify("Registration submitted. You can login after approval if required.");
       setMode("login");
+      setForm(createInitialForm());
+      window.history.pushState({}, "", "/login");
     } catch (error) {
       const message = error instanceof ApiError ? error.message : "Something went wrong";
       setFormError(message);
@@ -244,16 +346,79 @@ export function AuthPage({ api, initialMode = "login", onAuth, notify }: AuthPag
           </div>
         </div>
 
-        <div className="segmented">
-          {(["login", "doctor", "patient", "pharmacist", "admin"] as AuthMode[]).map((item) => (
-            <button key={item} type="button" className={mode === item ? "active" : ""} onClick={() => changeMode(item)}>
-              {item === "login" ? "Login" : item}
+        <div className="auth-heading-row">
+          <div>
+            <p className="eyebrow">{mode === "login" ? "Welcome back" : "Create account"}</p>
+            <h2>{mode === "login" ? "Login" : `Register ${mode}`}</h2>
+          </div>
+          {mode === "login" ? (
+            <button type="button" className="ghost-button" onClick={() => setRegisterChooserOpen((current) => !current)}>
+              Register
             </button>
-          ))}
+          ) : (
+            <button type="button" className="ghost-button" onClick={() => changeMode("login")}>
+              Login
+            </button>
+          )}
         </div>
 
         <form className="auth-form" onSubmit={submit}>
           {formError && <div className="form-error">{formError}</div>}
+
+          {mode === "login" && registerChooserOpen && !resetOpen && (
+            <div className="register-choice">
+              <p className="empty-state">Choose account type to register</p>
+              <div className="role-choice-grid">
+                {(["patient", "doctor", "pharmacist", "admin"] as AuthMode[]).map((role) => (
+                  <button key={role} className="ghost-button" type="button" onClick={() => changeMode(role)}>
+                    {role}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mode === "login" && resetOpen ? (
+            <>
+              <Field label="Registered email" value={form.email} type="email" error={fieldErrors.email || ""} onChange={(value) => update("email", value)} />
+              {!resetOtpSent ? (
+                <button className="primary-button" type="button" disabled={busy} onClick={requestPasswordReset}>
+                  {busy ? "Please wait" : "Get OTP"}
+                </button>
+              ) : (
+                <>
+                  {resetDevOtp && (
+                    <div className="field-help">
+                      Testing OTP: <code>{resetDevOtp}</code>
+                    </div>
+                  )}
+                  {resetMessage && <div className="field-help">{resetMessage}</div>}
+                  <Field label="OTP" value={resetOtp} onChange={setResetOtp} />
+                  <Field label="New password" value={form.password} type="password" error={fieldErrors.password || ""} onChange={(value) => update("password", value)} />
+                  <Field label="Confirm new password" value={form.confirmPassword} type="password" error={fieldErrors.confirmPassword || ""} onChange={(value) => update("confirmPassword", value)} />
+                  <button className="primary-button" type="button" disabled={busy} onClick={resetPassword}>
+                    {busy ? "Please wait" : "Reset password"}
+                  </button>
+                </>
+              )}
+              <button className="ghost-button" type="button" onClick={() => setResetOpen(false)}>
+                Back to login
+              </button>
+            </>
+          ) : (
+            <>
+
+          {mode !== "login" && (
+            <label className="field">
+              <span>Register as</span>
+              <select value={mode} onChange={(event) => changeMode(event.target.value as AuthMode)}>
+                <option value="patient">Patient</option>
+                <option value="doctor">Doctor</option>
+                <option value="pharmacist">Pharmacist</option>
+                <option value="admin">Admin</option>
+              </select>
+            </label>
+          )}
 
           {mode !== "login" && (
             <>
@@ -302,7 +467,19 @@ export function AuthPage({ api, initialMode = "login", onAuth, notify }: AuthPag
                   <option value="other">Other</option>
                 </select>
               </label>
-              <Field label="Blood group" value={form.bloodGroup} onChange={(value) => update("bloodGroup", value)} />
+              <label className="field">
+                <span>Blood group</span>
+                <select value={form.bloodGroup} onChange={(event) => update("bloodGroup", event.target.value)}>
+                  <option value="A+">A+</option>
+                  <option value="A-">A-</option>
+                  <option value="B+">B+</option>
+                  <option value="B-">B-</option>
+                  <option value="AB+">AB+</option>
+                  <option value="AB-">AB-</option>
+                  <option value="O+">O+</option>
+                  <option value="O-">O-</option>
+                </select>
+              </label>
               <Field label="Address" value={form.address} error={touched.address ? fieldErrors.address : ""} onBlur={() => touch("address")} onChange={(value) => update("address", value)} />
               <Field label="City" value={form.city} error={touched.city ? fieldErrors.city : ""} onBlur={() => touch("city")} onChange={(value) => update("city", value)} />
               <Field label="Pincode" value={form.pincode} error={touched.pincode ? fieldErrors.pincode : ""} onBlur={() => touch("pincode")} onChange={(value) => update("pincode", value)} />
@@ -311,6 +488,9 @@ export function AuthPage({ api, initialMode = "login", onAuth, notify }: AuthPag
 
           {mode === "pharmacist" && (
             <div className="form-grid">
+              <div className="field-help full-span">
+                Testing pharmacy UUID: <code>550e8400-e29b-41d4-a716-446655440005</code>
+              </div>
               <Field label="Pharmacy ID" value={form.pharmacyId} error={touched.pharmacyId ? fieldErrors.pharmacyId : ""} onBlur={() => touch("pharmacyId")} onChange={(value) => update("pharmacyId", value)} />
               <Field label="License number" value={form.licenseNumber} error={touched.licenseNumber ? fieldErrors.licenseNumber : ""} onBlur={() => touch("licenseNumber")} onChange={(value) => update("licenseNumber", value)} />
             </div>
@@ -319,6 +499,19 @@ export function AuthPage({ api, initialMode = "login", onAuth, notify }: AuthPag
           <button className="primary-button" disabled={busy || !isFormValid}>
             {busy ? "Please wait" : mode === "login" ? "Login" : "Create account"}
           </button>
+          {mode === "login" && (
+            <button className="ghost-button" type="button" onClick={() => {
+              setResetOpen(true);
+              setRegisterChooserOpen(false);
+              setForm((current) => ({ ...createInitialForm(), email: current.email }));
+              setFieldErrors({});
+              setFormError("");
+            }}>
+              Forgot password?
+            </button>
+          )}
+            </>
+          )}
         </form>
       </section>
     </main>
